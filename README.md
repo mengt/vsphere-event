@@ -40,3 +40,5 @@ port = 443 # vcenter 的端口
 crontab -e
 0-59/1 * * * * /opt/vsphere-event/env/bin/python /opt/vsphere-event/vsphere-monitor.py
 ```
+#### 参考
+https://vdc-download.vmware.com/vmwb-repository/dcr-public/6b586ed2-655c-49d9-9029-bc416323cb22/fa0b429a-a695-4c11-b7d2-2cbc284049dc/doc/index.html#link192a96c026a5b7ba4ab38a5354358d4e73b03e93;index-mo_types.html
