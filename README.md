@@ -1,4 +1,4 @@
-## vsphere-monitor
+## vsphere-event
 vsphere-event 通过 [pyvmomi](https://github.com/vmware/pyvmomi) 采集 vsphere 集群的数据。只需要连接 vcenter 就可以采集集群内的包括 ESXi，datastore，vm 等各种告警和事件。
 
 #### 版本需求
