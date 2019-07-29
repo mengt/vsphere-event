@@ -1,0 +1,285 @@
+#!/usr/bin/env python
+#coding=utf-8 
+
+import atexit
+from pyVmomi import vim, vmodl
+from pyVim.connect import SmartConnectNoSSL, Disconnect
+import sys
+import copy
+import requests
+import time
+import json
+import config
+from datetime import timedelta
+
+'''
+参考地址
+https://vdc-download.vmware.com/vmwb-repository/dcr-public/6b586ed2-655c-49d9-9029-bc416323cb22/fa0b429a-a695-4c11-b7d2-2cbc284049dc/doc/index.html
+'''
+
+#eventManager 事件管理器
+#entity 实体对象
+#event_type_ids 事件类型
+def getEvents(entity,eventManager,event_type_ids=None):
+    '''
+    dc = si.content.rootFolder.childEntity[0]
+    vm = si.content.searchIndex.FindChild(dc.vmFolder, 'vm_name')
+    '''
+    try:
+        events_list = []
+        byEntity = vim.event.EventFilterSpec.ByEntity(entity=entity, recursion="self")
+
+        if event_type_ids:
+            filterSpec = vim.event.EventFilterSpec(entity=byEntity)
+        else:
+            filterSpec = vim.event.EventFilterSpec(entity=byEntity, eventTypeId=event_type_ids)
+
+        events = eventManager.QueryEvent(filterSpec)  
+        for event in events:
+            #print("%s" % event.fullFormattedMessage)
+            #createdTime
+            events_list.append({"fullFormattedMessage":event.fullFormattedMessage.encode('utf8'),"createdTime":event.createdTime.strftime('%Y-%m-%d %H:%M:%S')})
+        return events_list
+    except Exception as error:
+        print "Unable to access Events for compute resource: ",
+        entity.name
+        print error
+        pass
+def print_triggered_alarms(entity=None):
+    """
+    如果你需要打印出报警参考,参考报警实体:
+    (vim.alarm.AlarmState) {
+        dynamicType = <unset>,
+        dynamicProperty = (vmodl.DynamicProperty) [],
+        key = 'alarm-8.datastore-104',
+        entity = 'vim.Datastore:datastore-104',
+        alarm = 'vim.alarm.Alarm:alarm-8',
+        overallStatus = 'red',
+        time = 2019-07-25T09:14:52.012135Z,
+        acknowledged = false,
+        acknowledgedByUser = <unset>,
+        acknowledgedTime = <unset>,
+        eventKey = <unset>
+    }
+    overallStatus==状态信息
+    gray:The status is unknown. 
+    green:The entity is OK. 
+    red:The entity definitely has a problem. 
+    yellow:The entity might have a problem.
+    """
+    try:
+        alarms_list = []
+        alarms = entity.triggeredAlarmState
+        for alarm in alarms:
+            #print("#"*40)
+            # The alarm key looks like alarm-101.host-95
+            #print("alarm_moref: {0}".format(alarm.key.split('.')[0]))
+            #print("alarm_moref: {0}".format(alarm.key.split('.')[1]))
+            #print("alarm_name: {0}".format(alarm.alarm.info.name.encode("utf8")))
+            #print("alarm_description: {0}".format(alarm.alarm.info.description.encode("utf8")))
+            #print("alarm status: {0}".format(alarm.overallStatus))
+            #print("alarm time: {0}".format(alarm.time))
+            alarms_list.append({"alarm_moref":alarm.key.split('.')[0],"alarm_moref":alarm.key.split('.')[1],
+                "alarm_name":alarm.alarm.info.name.encode("utf8"),"alarm_description":alarm.alarm.info.description.encode("utf8"),
+                "status":alarm.overallStatus,"time":alarm.time.strftime('%Y-%m-%d %H:%M:%S')})
+        return alarms_list
+    except Exception as error:
+        print "Unable to access alarm for compute resource: ",
+        entity.name
+        print error
+        pass   
+
+
+def print_entity_task(entity=None):
+    '''
+    每个实例类型的task方法不同，可以根据实体对象使用dir(entity)查看实体对象的task任务
+    '''
+    vm_task_type = ['ApplyEvcModeVM_Task', 'AttachDisk_Task', 'CloneVM_Task', 'ConsolidateVMDisks_Task', 'CreateScreenshot_Task', 
+    'CreateSecondaryVMEx_Task', 'CreateSecondaryVM_Task', 'CreateSnapshotEx_Task', 'CreateSnapshot_Task', 'CryptoUnlock_Task', 
+    'CustomizeVM_Task', 'Destroy_Task', 'DetachDisk_Task', 'DisableSecondaryVM_Task', 'EnableSecondaryVM_Task', 
+    'EstimateStorageForConsolidateSnapshots_Task', 'InstantClone_Task',  'MakePrimaryVM_Task', 'MigrateVM_Task', 'PowerOffVM_Task', 
+    'PowerOnVM_Task', 'PromoteDisks_Task', 'RelocateVM_Task', 'RemoveAllSnapshots_Task', 'Rename_Task', 'ResetVM_Task', 
+    'RevertToCurrentSnapshot_Task', 'StartRecording_Task', 'StartReplaying_Task', 'StopRecording_Task', 'StopReplaying_Task', 
+    'SuspendVM_Task', 'UpgradeTools_Task', 'UpgradeVM_Task', 'recentTask', 'reloadVirtualMachineFromPath_Task'] 
+    recentTasks = []
+    #查看近期的任务
+    vim_tasks = entity.recentTask
+    for recentTask in vim_tasks:
+        # print("#"*40)
+        # The alarm key looks like alarm-101.host-95
+        # print("Task_key: {0}".format(recentTask.info.key))
+        # print("Task_status: {0}".format(recentTask.info.state))
+        # print("Task_name: {0}".format(recentTask.info.name.encode("utf8")))
+        # print("alarm_description: {0}".format(recentTask.info.description.encode("utf8")))
+        # print("Task_descriptionId: {0}".format(recentTask.info.descriptionId))
+        # print("Task queueTime: {0}".format(alarm.time))
+        # print("Task startTime: {0}".format(alarm.time))
+        # 
+        recentTasks.append({"Task_key":recentTask.info.key,"Task_status":recentTask.info.state,
+            "Task_name":recentTask.info.name.encode("utf8"),"alarm_description":recentTask.info.description.encode("utf8"),
+            "Task_descriptionId":recentTask.info.descriptionId,"Task queueTime":alarm.time.strftime('%Y-%m-%d %H:%M:%S'),"Task startTime":alarm.time.strftime('%Y-%m-%d %H:%M:%S')})
+    return recentTasks
+#添加描述数据
+def add_data(entity_name,event,recentTask,alarm,interval,entity_type):
+    data = {"entity_name":entity_name,"event":event,"recentTask":recentTask,"alarm":alarm,"interval":interval,"entity_type":entity_type}
+    payload.append(copy.copy(data))
+
+def hello_vcenter(vchost,username,password,port):
+    try:
+        si = SmartConnectNoSSL(
+            host=vchost,
+            user=username,
+            pwd=password,
+            port=port)
+
+        atexit.register(Disconnect, si)
+        return True, "ok"
+    except vmodl.MethodFault as error:
+        return False, error.msg
+    except Exception as e:
+        return False, str(e)
+
+#定义一个回掉函数，简析数据中心下的层级关系，到集群层
+def getComputeResource(Folder,computeResourceList):
+    if hasattr(Folder, 'childEntity'):
+        for computeResource in Folder.childEntity:
+           getComputeResource(computeResource,computeResourceList)
+    else:
+        computeResourceList.append(Folder)
+    return computeResourceList
+
+#定义一个方法输出所有的主机
+def ComputeResourceInformation(computeResource,datacenter_name,eventManager):
+    try:
+        hostList = computeResource.host
+        computeResource_name = computeResource.name
+        #获得集群名字
+        # print '****************集群：'
+        # print computeResource_name.encode("utf8")
+        for host in hostList:
+            #获得主机名字
+            #print('########################################主机名字：%s' % host.name.encode("utf8"))
+            #获得主机的事件，不同的事件，输出不同，需要根据事件类型去做详细的输出展示
+            #getEvents(host,eventManager)
+            events_list = getEvents(host,eventManager)
+            #获得Vcenter的触发的警报
+            alarms_list = print_triggered_alarms(host)
+            #获得Vcenter的近期任务
+            recentTasks = print_entity_task(host)
+            #序列化
+            add_data(host.name.encode("utf8"),events_list,recentTasks,alarms_list,interval,"Host")
+
+            for vm in host.vm:
+                #获得虚拟机名字
+                #print('----------------------------------------虚拟机名字：%s' % vm.name.encode("utf8"))
+                #获得主机的事件，不同的事件，输出不同，需要根据事件类型去做详细的输出展示
+                #getEvents(host,eventManager)
+                events_list = getEvents(vm,eventManager)
+                #获得Vcenter的触发的警报
+                alarms_list = print_triggered_alarms(vm)
+                #获得Vcenter的近期任务
+                recentTasks = print_entity_task(vm)
+                #序列化
+                add_data(vm.name.encode("utf8"),events_list,recentTasks,alarms_list,interval,"VM")
+    except Exception as error:
+        print "Unable to access information for compute resource: ",
+        computeResource.name
+        print error
+        pass
+
+def run(host,user,pwd,port,interval):
+    try:
+        si = SmartConnectNoSSL(host=host, user=user, pwd=pwd, port=port)
+        #注销函数，等程序退出时会调用这个方法
+        atexit.register(Disconnect, si)
+        #检索服务实例的属性。
+        content = si.RetrieveContent()
+        #返回服务器上的当前时间。要监视非线性时间更改，请使用serverClock属性。
+        vchtime = si.CurrentTime()
+        #获得事件管理器
+        eventManager = si.content.eventManager
+        #获得Vcenter的事件，不同的事件，输出不同，需要根据事件类型去做详细的输出展示
+        events_list = getEvents(content.rootFolder,eventManager)
+        #获得Vcenter的触发的警报
+        alarms_list = print_triggered_alarms(content.rootFolder)
+        #获得Vcenter的近期任务
+        recentTasks = print_entity_task(content.rootFolder)
+        # perf_dict = {}
+        # #此管理对象类型提供服务接口，用于获取系统性能提供程序生成和维护的有关系统性能各个方面的统计数据。“性能提供程序”（PerfProviderSummary）是生成利用率或其他性能指标的任何托管对象
+        # perfList = content.perfManager.perfCounter
+        # for counter in perfList:
+        #     counter_full = "{}.{}.{}".format(counter.groupInfo.key, counter.nameInfo.key, counter.rollupType)
+        #     perf_dict[counter_full] = counter.key
+        #序列化
+        add_data(content.rootFolder.name,events_list,[],alarms_list,interval,"Vcenter")
+
+
+        for datacenter in content.rootFolder.childEntity:
+            datacenter_name = datacenter.name.encode("utf8")
+            #获得Vcenter下的数据中心
+            #print('****************************************数据中心：%s' % datacenter_name)
+            #获得数据中心的事件，不同的事件，输出不同，需要根据事件类型去做详细的输出展示
+            #getEvents(datacenter,eventManager)
+            events_list = getEvents(datacenter,eventManager)
+            #获得Vcenter的触发的警报
+            alarms_list = print_triggered_alarms(datacenter)
+            #获得Vcenter的近期任务
+            recentTasks = print_entity_task(datacenter)
+            
+            add_data(datacenter_name,events_list,recentTasks,alarms_list,interval,"Datacenter")
+
+            if hasattr(datacenter.hostFolder, 'childEntity'):
+                hostFolder = datacenter.hostFolder
+                computeResourceList = []
+                #简析层级关系
+                computeResourceList = getComputeResource(hostFolder,computeResourceList)
+                for computeResource in computeResourceList:
+                    #获得所有的主机名字
+                    ComputeResourceInformation(computeResource,datacenter_name,eventManager)
+
+        #查看整个集群下的VM
+        # print('****************************************Vcenter所有虚拟机的名字：')
+        # obj = content.viewManager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
+        # for vm in obj.view:
+        #     # vm_event_type = ["VmRemovedEvent","VmCreatedEvent","VmRenamedEvent","VmBeingRelocatedEvent","MigrationResourceWarningEvent",
+        #     #     "HostConnectionLostEvent","HostConnectedEvent","HostDisconnectedEvent","HostRemovedEvent","DatastoreRemovedOnHostEvent",
+        #     #     "HostOvercommittedEvent","HostCnxFailedTimeoutEvent","MigrationErrorEvent","VmCloneFailedEvent","VmConnectedEvent",
+        #     #     "VmDisconnectedEvent","ClusterCreatedEvent","ClusterDestroyedEvent","HostOvercommittedEvent","DatastoreDestroyedEvent",
+        #     #     "DatastoreFileDeletedEvent","DuplicateIpDetectedEvent","HostIpChangedEvent","ResourcePoolDestroyedEvent",
+        #     #     "VmFailedToPowerOnEvent","VmFailedToPowerOffEvent","EnteredMaintenanceModeEvent","VmStateFailedToRevertToSnapshot",
+        #     #     "VmStateRevertedToSnapshot"]
+        #     vm_event_type = ["VmFailedToPowerOnEvent","VmFailedToPowerOffEvent"]
+        #     #打印Vcenter所有虚拟机的名字 \
+        #     print("名字：%s" % vm.name.encode("utf8"))
+        #     #获得虚拟机的事件，不同的事件，输出不同，需要根据事件类型去做详细的输出展示
+        #     #getEvents(vm,eventManager,vm_event_type)
+        #     #
+
+    except vmodl.MethodFault as error:
+        print "Caught vmodl fault : " + error.msg
+        return False, error.msg
+    return True, "ok"
+
+
+
+if __name__ == "__main__":
+    host = config.host
+    user = config.user
+    pwd = config.pwd
+    port = config.port
+    #频率
+    interval = config.interval
+
+    ts = int(time.time())
+    payload = []
+
+    success, msg = hello_vcenter(host,user,pwd,port)
+    if success == False:
+        print msg
+        add_data("vcenter.alive",0,[],[],interval,"vcenter")
+        print json.dumps(payload,indent=4)    
+        sys.exit(1)  
+        add_data("vcenter.alive",1,[],[],interval,"vcenter")
+
+    run(host,user,pwd,port,interval)
+    print json.dumps(payload,indent=4)
